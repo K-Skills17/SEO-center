@@ -7,7 +7,7 @@ let _db: ReturnType<typeof drizzle<typeof schema>> | null = null;
 export function getDb() {
   if (!_db) {
     const connectionString = process.env.DATABASE_URL!;
-    const client = postgres(connectionString, { prepare: false });
+    const client = postgres(connectionString, { prepare: false, ssl: 'require' });
     _db = drizzle(client, { schema });
   }
   return _db;
