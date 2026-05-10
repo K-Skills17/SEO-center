@@ -4,12 +4,18 @@ import { sites } from '@/lib/db/schema';
 import { desc } from 'drizzle-orm';
 
 export async function GET() {
-  const allSites = await db
-    .select()
-    .from(sites)
-    .orderBy(desc(sites.createdAt));
+  try {
+    const allSites = await db
+      .select()
+      .from(sites)
+      .orderBy(desc(sites.createdAt));
 
-  return NextResponse.json(allSites);
+    return NextResponse.json(allSites);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    console.error('GET /api/sites error:', message);
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
 }
 
 export async function POST(request: NextRequest) {
