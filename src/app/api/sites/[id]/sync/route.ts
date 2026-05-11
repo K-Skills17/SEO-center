@@ -7,7 +7,7 @@ import {
   issues,
   keywordPositions,
 } from '@/lib/db/schema';
-import { eq, and, count } from 'drizzle-orm';
+import { eq, and, count, notInArray } from 'drizzle-orm';
 import { format, subDays } from 'date-fns';
 import { fetchSearchAnalytics } from '@/lib/gsc/fetcher';
 import { crawlUrl, parseSitemap } from '@/lib/crawler';
@@ -19,8 +19,11 @@ import {
 } from '@/lib/scoring';
 import type { CrawlResult } from '@/lib/crawler';
 
+let syncFingerprints: string[] = [];
+
 async function upsertIssues(siteId: string, issueInputs: ReturnType<typeof detectIssues>) {
   for (const issue of issueInputs) {
+    syncFingerprints.push(issue.fingerprint);
     await db
       .insert(issues)
       .values({
@@ -35,6 +38,8 @@ async function upsertIssues(siteId: string, issueInputs: ReturnType<typeof detec
         impact: issue.impact,
         fixSnippet: issue.fix_snippet,
         fingerprint: issue.fingerprint,
+        status: 'open',
+        resolvedAt: null,
       })
       .onConflictDoUpdate({
         target: issues.fingerprint,
@@ -43,12 +48,16 @@ async function upsertIssues(siteId: string, issueInputs: ReturnType<typeof detec
           impact: issue.impact,
           fixSnippet: issue.fix_snippet,
           severity: issue.severity,
+          status: 'open',
+          resolvedAt: null,
         },
       });
   }
 }
 
 async function runFullSync(siteId: string) {
+  syncFingerprints = [];
+
   await db
     .update(sites)
     .set({ syncStatus: 'syncing', syncError: null })
@@ -271,7 +280,24 @@ async function runFullSync(siteId: string) {
       await upsertIssues(siteId, cannibalizationIssues);
     }
 
-    // 4. Calculate composite health score
+    // 4. Resolve issues that were not found in this sync
+    if (syncFingerprints.length > 0) {
+      await db
+        .update(issues)
+        .set({
+          status: 'resolved',
+          resolvedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(issues.siteId, siteId),
+            eq(issues.status, 'open'),
+            notInArray(issues.fingerprint, syncFingerprints)
+          )
+        );
+    }
+
+    // 5. Calculate composite health score
     const allCrawl = await db.query.crawlData.findMany({
       where: eq(crawlData.siteId, siteId),
     });
@@ -298,7 +324,7 @@ async function runFullSync(siteId: string) {
       Math.round(avgOnPage - criticalIssueCount.count * 5)
     );
 
-    // 5. Mark sync complete
+    // 6. Mark sync complete
     await db
       .update(sites)
       .set({
